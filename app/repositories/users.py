@@ -1,25 +1,29 @@
 from datetime import datetime, timezone
-from sqlalchemy.orm import Session
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select
 from app.models import User
 from app import schemas
 from app.security import hash_password
 
-def create_user(user: schemas.UserCreate, db: Session) -> User:
+async def create_user(user: schemas.UserCreate, db: AsyncSession) -> User:
     db_user = User(
         username = user.username,
-        password = hash_password(user.password),
+        password = await hash_password(user.password),
         created_at = datetime.now(timezone.utc)
     )
     db.add(db_user)
-    db.commit()
-    db.refresh(db_user)
+    await db.commit()
+    await db.refresh(db_user)
     return db_user
 
-def get_users(db: Session) -> list[User]:
-    return db.query(User).all()
+async def get_users(db: AsyncSession) -> list[User]:
+    result = await db.execute(select(User))
+    return list(result.scalars().all())
 
-def get_user_by_id(id: int, db: Session) -> User | None:
-    return db.query(User).filter(User.id == id).first()
+async def get_user_by_id(user_id: int, db: AsyncSession) -> User | None:
+    result = await db.execute(select(User).where(User.id == user_id))
+    return result.scalar_one_or_none()
 
-def get_user_by_username(username: str, db: Session) -> User | None:
-    return db.query(User).filter(User.username == username).first()
+async def get_user_by_username(username: str, db: AsyncSession) -> User | None:
+    result = await db.execute(select(User).where(User.username == username))
+    return result.scalar_one_or_none()

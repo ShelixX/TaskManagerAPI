@@ -1,51 +1,8 @@
-import os
 from datetime import timedelta
 
-os.environ["SECRET_KEY"] = "test-secret-key-with-at-least-32-bytes"
-os.environ["DATABASE_URL"] = "sqlite://"
-os.environ["COOKIE_SECURE"] = "false"
-
 import jwt
-import pytest
-from fastapi.testclient import TestClient
-from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker
-from sqlalchemy.pool import StaticPool
 
 from app import security
-from app.database import Base
-from app.dependencies import get_db
-from app.main import app
-
-
-@pytest.fixture()
-def client():
-    engine = create_engine(
-        "sqlite://",
-        connect_args={"check_same_thread": False},
-        poolclass=StaticPool,
-    )
-    TestingSessionLocal = sessionmaker(
-        autoflush=False,
-        autocommit=False,
-        bind=engine,
-    )
-    Base.metadata.create_all(bind=engine)
-
-    def override_get_db():
-        db = TestingSessionLocal()
-        try:
-            yield db
-        finally:
-            db.close()
-
-    app.dependency_overrides[get_db] = override_get_db
-
-    with TestClient(app, base_url="https://testserver") as test_client:
-        yield test_client
-
-    app.dependency_overrides.clear()
-    Base.metadata.drop_all(bind=engine)
 
 
 def register_user(client, username="tokenuser", password="password123"):

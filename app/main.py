@@ -10,5 +10,5 @@ app.include_router(auth_router.router)
 app.include_router(task_router.router)
 
 @app.get("/")
-def root():
+async def root():
     return {"message": "Task manager API is running"}

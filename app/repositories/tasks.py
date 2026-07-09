@@ -1,9 +1,10 @@
 from datetime import datetime, timezone
-from sqlalchemy.orm import Session
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select
 from app.models import Task, User
 from app import schemas
 
-def create(task: schemas.TaskCreate, user: User, db:Session) -> Task:
+async def create(task: schemas.TaskCreate, user: User, db:AsyncSession) -> Task:
     db_task = Task(
         title=task.title,
         description=task.description,
@@ -11,24 +12,26 @@ def create(task: schemas.TaskCreate, user: User, db:Session) -> Task:
         created_at = datetime.now(timezone.utc)
     )
     db.add(db_task)
-    db.commit()
-    db.refresh(db_task)
+    await db.commit()
+    await db.refresh(db_task)
     return db_task
 
-def update(task_update: schemas.TaskUpdate, db_task: Task, db:Session) -> Task:
+async def update(task_update: schemas.TaskUpdate, db_task: Task, db:AsyncSession) -> Task:
     update_data = task_update.model_dump(exclude_unset=True)
     for field, value in update_data.items():
         setattr(db_task, field, value)
-    db.commit()
-    db.refresh(db_task)
+    await db.commit()
+    await db.refresh(db_task)
     return db_task
 
-def get_user_tasks(user: User) -> list[Task]:
-    return user.tasks
+async def get_user_tasks(user: User, db:AsyncSession) -> list[Task]:
+    result = await db.execute(select(Task).where(Task.user_id == user.id))
+    return list(result.scalars().all())
 
-def delete(db_task: Task, db:Session) -> None:
-    db.delete(db_task)
-    db.commit()
+async def delete(db_task: Task, db:AsyncSession) -> None:
+    await db.delete(db_task)
+    await db.commit()
 
-def get(task_id: int, db: Session) -> Task | None:
-    return db.query(Task).filter(Task.id == task_id).first()
+async def get(task_id: int, db: AsyncSession) -> Task | None:
+    result = await db.execute(select(Task).where(Task.id == task_id))
+    return result.scalar_one_or_none()

@@ -3,10 +3,12 @@ import jwt
 from pwdlib import PasswordHash
 from app.config import settings
 from fastapi import HTTPException, status
-from sqlalchemy.orm import Session
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select, update
 from app.models import User, RefreshToken
 import hashlib
 import uuid
+from starlette.concurrency import run_in_threadpool
 
 SECRET_KEY = settings.secret_key
 
@@ -16,11 +18,11 @@ REFRESH_TOKEN_EXPIRE_DAYS = settings.refresh_token_expire_days
 
 password_hash = PasswordHash.recommended()
 
-def hash_password(password: str) -> str:
-    return password_hash.hash(password)
+async def hash_password(password: str) -> str:
+    return await run_in_threadpool(password_hash.hash, password)
 
-def verify_password(password: str, hashed_password: str) -> bool:
-    return password_hash.verify(password, hashed_password)
+async def verify_password(password: str, hashed_password: str) -> bool:
+    return await run_in_threadpool(password_hash.verify, password, hashed_password)
 
 def hash_token(token:str) -> str:
     return hashlib.sha256(token.encode("utf-8")).hexdigest()
@@ -49,7 +51,7 @@ def decode_token(token: str) -> dict | None:
             detail="Invalid token"
         )
 
-def create_refresh_token(user: User, db: Session, commit: bool = True) -> str:
+async def create_refresh_token(user: User, db: AsyncSession, commit: bool = True) -> str:
     now = utc_now()
     exp = now + timedelta(days=REFRESH_TOKEN_EXPIRE_DAYS)
     jti = str(uuid.uuid4())
@@ -70,10 +72,10 @@ def create_refresh_token(user: User, db: Session, commit: bool = True) -> str:
     )
     db.add(db_token)
     if commit:
-        db.commit()
+        await db.commit()
     return token
 
-def rotate_refresh_token(refresh_token:str, db: Session) -> tuple[str, str]:
+async def rotate_refresh_token(refresh_token:str, db: AsyncSession) -> tuple[str, str]:
     payload = decode_token(refresh_token)
     if not payload:
         raise HTTPException(
@@ -100,12 +102,12 @@ def rotate_refresh_token(refresh_token:str, db: Session) -> tuple[str, str]:
             detail="Invalid refresh token payload",
         )
     token_hash = hash_token(refresh_token)
-    db_token = (
-        db.query(RefreshToken)
-        .filter(RefreshToken.jti == jti,
+    db_token = (await db.execute(
+        select(RefreshToken).where(
+            RefreshToken.jti == jti,
             RefreshToken.token == token_hash
-        ).first()
-    )
+        )
+    )).scalar_one_or_none()
     if not db_token:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -117,11 +119,13 @@ def rotate_refresh_token(refresh_token:str, db: Session) -> tuple[str, str]:
             detail="Invalid refresh token payload",
         )
     if db_token.revoked:
-        db.query(RefreshToken).filter(
-            RefreshToken.user_id == db_token.user_id,
-            RefreshToken.revoked == False,
-        ).update({"revoked": True})
-        db.commit()
+        await db.execute(
+            update(RefreshToken).where(
+                RefreshToken.user_id == db_token.user_id,
+                RefreshToken.revoked == False,
+            ).values(revoked=True)
+        )
+        await db.commit()
         raise HTTPException(
             status_code=401,
             detail="Refresh token reuse detected",
@@ -131,33 +135,31 @@ def rotate_refresh_token(refresh_token:str, db: Session) -> tuple[str, str]:
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Refresh token expired",
         )
-    user: User | None = db.query(User).filter(User.id == user_id_int).first()
+    user: User | None = (await db.execute(select(User).where(User.id == user_id_int))).scalar_one_or_none()
     if not user or not user.is_active:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="User not found or inactive",
         )
-    updated = (
-        db.query(RefreshToken)
-        .filter(
-            RefreshToken.jti == jti,
-            RefreshToken.token == token_hash,
-            RefreshToken.revoked == False,
-        )
-        .update({"revoked": True})
+    updated = await db.execute(
+            update(RefreshToken).where(
+                RefreshToken.jti == jti,
+                RefreshToken.token == token_hash,
+                RefreshToken.revoked == False
+            ).values(revoked=True)
     )
-    if updated != 1:
-        db.rollback()
+    if updated.rowcount != 1:
+        await db.rollback()
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Refresh token revoked or not found",
         )
     new_access_token = create_access_token(user)
-    new_refresh_token = create_refresh_token(user, db, commit=False)
-    db.commit()
+    new_refresh_token = await create_refresh_token(user, db, commit=False)
+    await db.commit()
     return new_access_token, new_refresh_token
 
-def revoke_refresh_token(refresh_token: str, db: Session):
+async def revoke_refresh_token(refresh_token: str, db: AsyncSession):
     payload = decode_token(refresh_token)
     if not payload:
         raise HTTPException(
@@ -176,13 +178,13 @@ def revoke_refresh_token(refresh_token: str, db: Session):
             detail="Invalid refresh token payload",
         )
     token_hash = hash_token(refresh_token)
-    db_token = (
-        db.query(RefreshToken)
-        .filter(RefreshToken.jti == jti,
-                RefreshToken.token == token_hash,
-                RefreshToken.revoked == False
-                ).first()
-    )
+    db_token = (await db.execute(
+        select(RefreshToken).where(
+            RefreshToken.jti == jti,
+            RefreshToken.token == token_hash,
+            RefreshToken.revoked == False
+        )
+    )).scalar_one_or_none()
     if db_token:
         db_token.revoked = True
-        db.commit()
+        await db.commit()

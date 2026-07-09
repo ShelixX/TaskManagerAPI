@@ -1,5 +1,5 @@
 from fastapi import APIRouter, Depends
-from sqlalchemy.orm import Session
+from sqlalchemy.ext.asyncio import AsyncSession
 from app import bearer
 from app import schemas
 from app.dependencies import get_db
@@ -12,39 +12,42 @@ router = APIRouter(
 )
 
 @router.post("/", response_model=schemas.TaskRead)
-def create_task(
+async def create_task(
     task: schemas.TaskCreate,
     user = Depends(bearer.get_current_user),
-    db: Session = Depends(get_db)
+    db: AsyncSession = Depends(get_db)
 ):
-    return tasks.create_task(task, user, db)
+    return await tasks.create_task(task, user, db)
 
 @router.get("/{task_id}", response_model=schemas.TaskRead)
-def get_task(
+async def get_task(
     task_id: int,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_db),
     user: User = Depends(bearer.get_current_user)
 ):
-    return tasks.get_task_for_user(task_id, user, db)
+    return await tasks.get_task_for_user(task_id, user, db)
 
 @router.get("/", response_model=list[schemas.TaskRead])
-def get_tasks(user: User = Depends(bearer.get_current_user)):
-    return tasks.get_tasks_for_user(user)
+async def get_tasks(
+    user: User = Depends(bearer.get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    return await tasks.get_tasks_for_user(user, db)
 
 @router.patch("/{task_id}", response_model=schemas.TaskRead)
-def update_task(
+async def update_task(
     task_id: int,
     task: schemas.TaskUpdate,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_db),
     user: User = Depends(bearer.get_current_user)
 ):
-    return tasks.update_task_for_user(task_id, task, user, db)
+    return await tasks.update_task_for_user(task_id, task, user, db)
 
 @router.delete("/{task_id}")
-def delete_task(
+async def delete_task(
     task_id: int,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_db),
     user: User = Depends(bearer.get_current_user)
 ):
-    tasks.delete_task_for_user(task_id, user, db)
+    await tasks.delete_task_for_user(task_id, user, db)
     return {"message": "Task deleted"}

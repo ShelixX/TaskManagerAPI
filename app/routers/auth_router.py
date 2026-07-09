@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Depends, Response, Cookie
 from fastapi.security import OAuth2PasswordRequestForm
-from sqlalchemy.orm import Session
+from sqlalchemy.ext.asyncio import AsyncSession
 from app import bearer
 from app import schemas
 from app.dependencies import get_db
@@ -13,12 +13,12 @@ router = APIRouter(
 )
 
 @router.post("/login", response_model=schemas.TokenResponse)
-def login(
+async def login(
     response: Response,
     form_data: OAuth2PasswordRequestForm = Depends(),
-    db: Session = Depends(get_db)
+    db: AsyncSession = Depends(get_db)
 ):
-    access_token, refresh_token = auth.login_user(form_data.username, form_data.password, db)
+    access_token, refresh_token = await auth.login_user(form_data.username, form_data.password, db)
     response.set_cookie(
         key="refresh_token",
         value=refresh_token,
@@ -31,17 +31,17 @@ def login(
     return {"access_token": access_token, "token_type": "bearer"}
 
 @router.post("/register", response_model=schemas.CurrentUserResponse)
-def register(data: schemas.UserCreate, db: Session = Depends(get_db)):
-    user = auth.register_user(data, db)
+async def register(data: schemas.UserCreate, db: AsyncSession = Depends(get_db)):
+    user = await auth.register_user(data, db)
     return {"message": "User has been created!", "user_data": user}
 
 @router.post("/refresh", response_model=schemas.TokenResponse)
-def refresh(
+async def refresh(
     response: Response,
     refresh_token: str | None = Cookie(default=None),
-    db: Session = Depends(get_db)
+    db: AsyncSession = Depends(get_db)
 ):
-    access_token, refresh_token = auth.refresh_user_tokens(refresh_token, db)
+    access_token, refresh_token = await auth.refresh_user_tokens(refresh_token, db)
     response.set_cookie(
         key="refresh_token",
         value=refresh_token,
@@ -54,12 +54,12 @@ def refresh(
     return {"access_token": access_token, "token_type": "bearer"}
 
 @router.post("/logout")
-def logout(
+async def logout(
     response: Response,
     refresh_token: str | None = Cookie(default=None),
-    db: Session = Depends(get_db)
+    db: AsyncSession = Depends(get_db)
 ):
-    auth.logout_user(refresh_token, db)
+    await auth.logout_user(refresh_token, db)
     response.delete_cookie(
         key="refresh_token",
         httponly=True,
@@ -70,7 +70,7 @@ def logout(
     return {"message": "Logged out"}
 
 @router.get("/me", response_model=schemas.CurrentUserResponse)
-def get_current_user(user = Depends(bearer.get_current_user)):
+async def get_current_user(user = Depends(bearer.get_current_user)):
     return {
         "message": "Current profile",
         "user_data": user
